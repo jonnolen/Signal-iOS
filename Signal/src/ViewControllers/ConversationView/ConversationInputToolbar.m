@@ -4,6 +4,7 @@
 
 #import "ConversationInputToolbar.h"
 #import "ConversationInputTextView.h"
+#import "ConversationKeyboardObservingView.h"
 #import "Environment.h"
 #import "OWSContactsManager.h"
 #import "OWSMath.h"
@@ -192,14 +193,15 @@ const CGFloat kMaxTextViewHeight = 98;
     OWSAssertDebug(self.inputTextView);
 
     self.inputTextView.text = value;
-
     [self ensureShouldShowVoiceMemoButtonAnimated:isAnimated];
     [self ensureTextViewHeight];
-}
 
-- (void)ensureTextViewHeight
-{
-    [self updateHeightWithTextView:self.inputTextView];
+    CGSize contentSize = self.inputTextView.contentSize;
+    CGSize frameSize = self.inputTextView.frame.size;
+
+    if (contentSize.height > frameSize.height) {
+        self.inputTextView.contentOffset = CGPointMake(0, contentSize.height - frameSize.height);
+    }
 }
 
 - (void)clearTextMessageAnimated:(BOOL)isAnimated
@@ -602,6 +604,12 @@ const CGFloat kMaxTextViewHeight = 98;
     [self updateHeightWithTextView:textView];
 }
 
+#pragma mark - Auto sizing textview.
+- (void)ensureTextViewHeight
+{
+  [self updateHeightWithTextView:self.inputTextView];
+}
+
 - (void)updateHeightWithTextView:(UITextView *)textView
 {
     // compute new height assuming width is unchanged
@@ -612,7 +620,11 @@ const CGFloat kMaxTextViewHeight = 98;
         self.textViewHeight = newHeight;
         OWSAssertDebug(self.textViewHeightConstraint);
         self.textViewHeightConstraint.constant = newHeight;
-        [self invalidateIntrinsicContentSize];
+        [self setNeedsLayout];
+        [self layoutIfNeeded];
+        if(self.keyboardObserver) {
+            [self.keyboardObserver updateHeight:self.frame.size.height];
+        }
     }
 }
 
@@ -624,7 +636,7 @@ const CGFloat kMaxTextViewHeight = 98;
     return CGFloatClamp(contentSize.height, kMinTextViewHeight, kMaxTextViewHeight);
 }
 
-#pragma mark QuotedReplyPreviewViewDelegate
+#pragma mark - QuotedReplyPreviewViewDelegate
 
 - (void)quotedReplyPreviewDidPressCancel:(QuotedReplyPreview *)preview
 {

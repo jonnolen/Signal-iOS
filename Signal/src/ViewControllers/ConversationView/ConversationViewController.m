@@ -10,6 +10,7 @@
 #import "ConversationCollectionView.h"
 #import "ConversationInputTextView.h"
 #import "ConversationInputToolbar.h"
+#import "ConversationKeyboardObservingView.h"
 #import "ConversationScrollButton.h"
 #import "ConversationViewCell.h"
 #import "ConversationViewItem.h"
@@ -141,7 +142,9 @@ typedef enum : NSUInteger {
 @property (nonatomic, readonly) OWSAudioActivity *recordVoiceNoteAudioActivity;
 @property (nonatomic, readonly) NSTimeInterval viewControllerCreatedAt;
 
+@property (nonatomic, readonly) NSLayoutConstraint * inputToolbarTopConstraint;
 @property (nonatomic, readonly) ConversationInputToolbar *inputToolbar;
+@property (nonatomic, readonly) ConversationKeyboardObservingView *keyboardObserver;
 @property (nonatomic, readonly) ConversationCollectionView *collectionView;
 @property (nonatomic, readonly) ConversationViewLayout *layout;
 @property (nonatomic, readonly) ConversationStyle *conversationStyle;
@@ -352,10 +355,21 @@ typedef enum : NSUInteger {
                                              selector:@selector(profileWhitelistDidChange:)
                                                  name:kNSNotificationName_ProfileWhitelistDidChange
                                                object:nil];
-    [[NSNotificationCenter defaultCenter] addObserver:self
-                                             selector:@selector(keyboardWillChangeFrame:)
-                                                 name:UIKeyboardWillChangeFrameNotification
-                                               object:nil];
+
+    [NSNotificationCenter.defaultCenter addObserver:self
+                                           selector:@selector(keyboardWillChangeFrame:)
+                                               name:kOWSKeyboardFrameDidChangeNotification
+                                             object:nil];
+//    [NSNotificationCenter.defaultCenter addObserver:self
+//                                           selector:@selector(keyboardWillChangeFrame:)
+//                                               name:UIKeyboardWillShowNotification
+//                                             object:nil];
+//    [NSNotificationCenter.defaultCenter addObserver:self
+//                                         selector:@selector(keyboardWillChangeFrame:)
+//                                             name:UIKeyboardWillHideNotification
+//                                             object:nil];
+
+
 }
 
 - (BOOL)isGroupConversation
@@ -560,9 +574,22 @@ typedef enum : NSUInteger {
 
     [self.collectionView applyScrollViewInsetsFix];
 
+
+    _keyboardObserver = [ConversationKeyboardObservingView new];
+    self.keyboardObserver.userInteractionEnabled = NO;
+
     _inputToolbar = [[ConversationInputToolbar alloc] initWithConversationStyle:self.conversationStyle];
     self.inputToolbar.inputToolbarDelegate = self;
     self.inputToolbar.inputTextViewDelegate = self;
+    self.inputToolbar.keyboardObserver = self.keyboardObserver;
+    [self.view addSubview:self.inputToolbar];
+    [self.inputToolbar autoPinWidthToWidthOfView:self.view];
+    CGFloat inputToolbarStart = self.view.frame.size.height - self.inputToolbar.bounds.size.height;
+    _inputToolbarTopConstraint = [self.inputToolbar autoPinEdge:ALEdgeTop toEdge:ALEdgeTop ofView:self.view withOffset:inputToolbarStart];
+
+    [self.inputToolbar setNeedsLayout];
+    [self.inputToolbar layoutIfNeeded];
+
 
     self.loadMoreHeader = [UILabel new];
     self.loadMoreHeader.text = NSLocalizedString(@"CONVERSATION_VIEW_LOADING_MORE_MESSAGES",
@@ -576,6 +603,7 @@ typedef enum : NSUInteger {
     [self.loadMoreHeader autoSetDimension:ALDimensionHeight toSize:kLoadMoreHeaderHeight];
 
     [self updateShowLoadMoreHeader];
+
 }
 
 - (BOOL)becomeFirstResponder
@@ -597,7 +625,7 @@ typedef enum : NSUInteger {
 
 - (nullable UIView *)inputAccessoryView
 {
-    return self.inputToolbar;
+    return self.keyboardObserver;
 }
 
 - (void)registerCellClasses
@@ -3556,34 +3584,39 @@ typedef enum : NSUInteger {
     });
 }
 
+#pragma mark - Keyboard notification handling.
 - (void)keyboardWillChangeFrame:(NSNotification *)notification
 {
     // `willChange` is the correct keyboard notifiation to observe when adjusting contentInset
     // in lockstep with the keyboard presentation animation. `didChange` results in the contentInset
     // not adjusting until after the keyboard is fully up.
-    OWSLogVerbose(@"");
-    [self handleKeyboardNotification:notification];
-}
-
-- (void)handleKeyboardNotification:(NSNotification *)notification
-{
-    OWSAssertIsOnMainThread();
-
+    OWSLogVerbose(@"%@", notification.name);
     NSDictionary *userInfo = [notification userInfo];
 
-    NSValue *_Nullable keyboardBeginFrameValue = userInfo[UIKeyboardFrameBeginUserInfoKey];
-    if (!keyboardBeginFrameValue) {
-        OWSFailDebug(@"Missing keyboard begin frame");
-        return;
-    }
+    // TODO: why is this needed, it's never used.
+    //    NSValue *_Nullable keyboardBeginFrameValue = userInfo[UIKeyboardFrameBeginUserInfoKey];
+    //    if (!keyboardBeginFrameValue) {
+    //        OWSFailDebug(@"Missing keyboard begin frame");
+    //        return;
+    //    }
 
     NSValue *_Nullable keyboardEndFrameValue = userInfo[UIKeyboardFrameEndUserInfoKey];
     if (!keyboardEndFrameValue) {
-        OWSFailDebug(@"Missing keyboard end frame");
-        return;
+      OWSFailDebug(@"Missing keyboard end frame");
+      return;
     }
     CGRect keyboardEndFrame = [keyboardEndFrameValue CGRectValue];
+    [self updateViewsForNewKeyboardFrame:keyboardEndFrame];
+}
 
+- (void)updateViewsForNewKeyboardFrame:(CGRect)keyboardEndFrame
+{
+    OWSAssertIsOnMainThread();
+    [self updateContentViewForKeyboardFrame:keyboardEndFrame];
+    [self updateInputBarForKeyboardFrame:keyboardEndFrame];
+}
+
+- (void)updateContentViewForKeyboardFrame:(CGRect)keyboardEndFrame{
     UIEdgeInsets oldInsets = self.collectionView.contentInset;
     UIEdgeInsets newInsets = oldInsets;
 
@@ -3612,7 +3645,7 @@ typedef enum : NSUInteger {
         // to be smoothly animated.
         CGRect newButtonFrame = self.scrollDownButton.frame;
         newButtonFrame.origin.y
-            = self.scrollDownButton.superview.height - (newInsets.bottom + self.scrollDownButton.height);
+        = self.scrollDownButton.superview.height - (newInsets.bottom + self.scrollDownButton.height);
         self.scrollDownButton.frame = newButtonFrame;
 
         // Adjust content offset to prevent the presented keyboard from obscuring content.
@@ -3648,6 +3681,14 @@ typedef enum : NSUInteger {
         [UIView performWithoutAnimation:adjustInsets];
     }
 }
+
+- (void)updateInputBarForKeyboardFrame:(CGRect)keyboardEndFrame {
+    self.inputToolbarTopConstraint.constant = keyboardEndFrame.origin.y;
+    [self.view setNeedsLayout];
+    [self.view layoutIfNeeded];
+}
+
+#pragma mark -
 
 - (void)applyTheme
 {

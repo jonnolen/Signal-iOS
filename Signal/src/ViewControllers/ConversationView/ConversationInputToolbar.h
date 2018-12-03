@@ -7,6 +7,9 @@ NS_ASSUME_NONNULL_BEGIN
 @class ConversationStyle;
 @class OWSQuotedReplyModel;
 @class SignalAttachment;
+@class ConversationKeyboardObservingView;
+
+extern CGFloat const kMinTextViewHeight;
 
 @protocol ConversationInputToolbarDelegate <NSObject>
 
@@ -39,6 +42,7 @@ NS_ASSUME_NONNULL_BEGIN
 - (instancetype)initWithFrame:(CGRect)frame NS_UNAVAILABLE;
 
 @property (nonatomic, weak) id<ConversationInputToolbarDelegate> inputToolbarDelegate;
+@property (nonatomic, weak) ConversationKeyboardObservingView *keyboardObserver;
 
 - (void)beginEditingTextMessage;
 - (void)endEditingTextMessage;
